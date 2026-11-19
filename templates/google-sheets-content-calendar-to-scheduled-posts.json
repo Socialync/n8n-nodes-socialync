@@ -1,0 +1,668 @@
+{
+  "name": "Schedule posts from a Google Sheets content calendar with Socialync",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### How it works\nEvery hour this workflow takes the first row marked Ready in a Google Sheets content calendar and schedules it with Socialync. The row gives the caption, the platforms, an optional image or video link and the time. The workflow first sets the row to Scheduling, so no later run can take it again. The sheet then shows the result in Status and Notes: Scheduled with the post ID, or Needs fixing with the reason. A row with a problem never stops the next row from running on the next hour.\n\nPosts are scheduled without a manual approval step. You can cancel or change any scheduled post in Socialync until it goes out.\n\n### Setup\n1. Create an API key at https://socialync.io/go/n8n-node-keys and add it as a Socialync credential.\n2. Add a Google Sheets credential.\n3. Make a sheet with these columns: Caption, Platforms, Publish at, Image URL, Video URL, Title, Status, Notes. Type times as 2026-11-12 09:30 in a plain text column. Set Status to Ready.\n4. Choose the sheet in all five Google Sheets nodes. Set your time zone in Settings.\n5. Connect your platforms in Socialync first.\n\n### Customization\nLeave Platforms empty to use the list in Settings. Instagram needs an image or a video. YouTube needs a Title. TikTok needs a privacy level in Settings.\n\nA row stuck on Scheduling means a run stopped part way. Check Socialync, then set the row to Scheduled or Ready.\n\nAPI reference: https://socialync.io/go/n8n-node",
+        "width": 520,
+        "height": 600
+      },
+      "id": "c3621d01-7391-456a-a4d5-d7bc0b41b2de",
+      "name": "Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -760
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "a82030e6-dc1b-46c3-835a-fbab0d122cd0",
+      "name": "Check for a Ready row every hour",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "REPLACE_WITH_YOUR_SPREADSHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "",
+          "cachedResultName": ""
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Status",
+              "lookupValue": "Ready"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "id": "036f7c48-5042-4f86-8201-28b1ed744340",
+      "name": "Get the next Ready row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        470,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": null,
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a59f34b8-bdb5-4eec-a173-89e171922646",
+              "name": "profileId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "208e1b1a-2512-46e7-bc6e-70e3922fa383",
+              "name": "defaultPlatforms",
+              "value": "linkedin,facebook,threads,bluesky",
+              "type": "string"
+            },
+            {
+              "id": "a7c07fb2-6fd8-4c8c-b243-0a9fc193f362",
+              "name": "timezone",
+              "value": "America/New_York",
+              "type": "string"
+            },
+            {
+              "id": "ab9369be-efc9-491d-9d1e-fd1bc55d0054",
+              "name": "publishDelayMinutes",
+              "value": 60,
+              "type": "number"
+            },
+            {
+              "id": "ce629e34-9fac-4171-9d99-2a0db2185f37",
+              "name": "tiktokPrivacyLevel",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "ef91846a-fe24-43f7-a00e-2f18d5e990b1",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ALLOWED = [\"facebook\",\"instagram\",\"linkedin\",\"twitter\",\"threads\",\"bluesky\",\"tiktok\",\"youtube\"];\nfunction parsePlatforms(raw) {\n  const list = (Array.isArray(raw) ? raw : String(raw || '').split(','))\n    .map((p) => String(p).trim().toLowerCase())\n    .filter(Boolean)\n    .map((p) => (p === 'x' ? 'twitter' : p));\n  const unknown = list.filter((p) => !ALLOWED.includes(p));\n  if (unknown.length) throw new Error('Socialync cannot post to: ' + unknown.join(', ') + '. Use: ' + ALLOWED.join(', ') + '.');\n  if (!list.length) throw new Error('Set at least one platform in the Settings node.');\n  return [...new Set(list)];\n}\n// '2026-11-12 09:30' is read in the Settings time zone. A value with Z or an offset is used as written.\nfunction parseWhen(text, zone) {\n  const s = String(text || '').trim();\n  if (!s) return null;\n  if (/([zZ]|[+-]\\d{2}:?\\d{2})$/.test(s)) {\n    const d = new Date(s);\n    return isNaN(d.getTime()) ? null : d;\n  }\n  const m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})(?:[ T](\\d{1,2}):(\\d{2}))?/);\n  if (!m) return null;\n  const [y, mo, d] = m.slice(1, 4).map(Number);\n  const h = m[4] === undefined ? 9 : Number(m[4]);\n  const mi = m[5] === undefined ? 0 : Number(m[5]);\n  const guess = Date.UTC(y, mo - 1, d, h, mi);\n  const offsetAt = (t) => {\n    const parts = new Intl.DateTimeFormat('en-US', {\n      timeZone: zone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',\n    }).formatToParts(new Date(t));\n    const v = {};\n    for (const p of parts) if (p.type !== 'literal') v[p.type] = Number(p.value);\n    return Date.UTC(v.year, v.month - 1, v.day, v.hour, v.minute, v.second) - t;\n  };\n  let utc = guess - offsetAt(guess);\n  utc = guess - offsetAt(utc);\n  return new Date(utc);\n}\n// A short hash of the content, so the key stays the same on every run for the same row.\nfunction shortHash(text) {\n  let h = 5381;\n  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;\n  return h.toString(36);\n}\n// Socialync accepts 1 to 255 letters, digits and _ . : - in an Idempotency Key.\nfunction safeKey(prefix, value) {\n  return (prefix + ':' + String(value)).replace(/[^A-Za-z0-9_.:-]/g, '-').slice(0, 200);\n}\nconst row = $('Get the next Ready row').first().json;\nconst s = $input.first().json;\nconst problem = (message) => [{ json: { ok: false, problem: message } }];\n\ntry {\n  const caption = String(row.Caption || '').trim();\n  if (!caption) return problem('Caption is empty.');\n  const platforms = parsePlatforms(String(row.Platforms || '').trim() || s.defaultPlatforms);\n  const imageUrl = String(row['Image URL'] || '').trim();\n  const videoUrl = String(row['Video URL'] || '').trim();\n  if (imageUrl && videoUrl) return problem('Fill in only one of Image URL and Video URL.');\n  for (const link of [imageUrl, videoUrl]) {\n    if (link && !/^https:\\/\\//i.test(link)) return problem('Image URL and Video URL need public https links.');\n  }\n  if (platforms.includes('instagram') && !imageUrl && !videoUrl) return problem('Instagram needs an Image URL or a Video URL.');\n  const title = String(row.Title || '').trim();\n  if (platforms.includes('youtube') && !title) return problem('YouTube needs a Title.');\n  const level = String(s.tiktokPrivacyLevel || '').trim();\n  if (platforms.includes('tiktok') && !level) return problem('TikTok needs a privacy level. Set tiktokPrivacyLevel in Settings.');\n\n  const earliest = Date.now() + Math.max(5, Number(s.publishDelayMinutes) || 60) * 60000;\n  let when = null;\n  const rawWhen = String(row['Publish at'] || '').trim();\n  if (rawWhen) {\n    try { when = parseWhen(rawWhen, s.timezone || 'UTC'); } catch (e) { return problem('The time zone \"' + s.timezone + '\" in Settings is not valid. Use a name like America/New_York.'); }\n    if (!when) return problem('Publish at must look like 2026-11-12 09:30.');\n  }\n  const scheduledAt = new Date(Math.max(earliest, when ? when.getTime() : 0)).toISOString();\n\n  return [{ json: {\n    ok: true,\n    post: {\n      profileId: String(s.profileId || '').trim(),\n      platforms,\n      caption,\n      scheduledAt,\n      mediaSource: videoUrl ? 'videoUrl' : imageUrl ? 'imageUrls' : 'none',\n      imageUrls: imageUrl,\n      videoUrl,\n      title,\n      tiktokPrivacyLevel: level,\n      idempotencyKey: safeKey('sheet', row.row_number + ':' + shortHash(rawWhen + '|' + platforms.join(',') + '|' + caption)),\n    },\n  } }];\n} catch (e) {\n  return problem(e.message);\n}"
+      },
+      "id": "0c4acadf-708f-4bed-8e26-59cbaa23ff10",
+      "name": "Build the post from the row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        930,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "793a0e99-d67d-4dc4-8198-e872d4c1229e",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4315abb9-67b3-4472-a8df-a9ced100d85e",
+      "name": "Row is valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "REPLACE_WITH_YOUR_SPREADSHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "",
+          "cachedResultName": ""
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "Scheduling",
+            "row_number": "={{ $('Get the next Ready row').first().json.row_number }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "Status",
+              "type": "string",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "Status",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "type": "number",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "row_number",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "readOnly": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "873aa784-6750-41eb-8c24-27074f653cb6",
+      "name": "Claim the row so no later run takes it",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1390,
+        -100
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": null,
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "post",
+        "operation": "schedule",
+        "profileId": "={{ $('Build the post from the row').first().json.post.profileId }}",
+        "platforms": "={{ $('Build the post from the row').first().json.post.platforms }}",
+        "caption": "={{ $('Build the post from the row').first().json.post.caption }}",
+        "scheduledAt": "={{ $('Build the post from the row').first().json.post.scheduledAt }}",
+        "mediaSource": "={{ $('Build the post from the row').first().json.post.mediaSource }}",
+        "imageUrls": "={{ $('Build the post from the row').first().json.post.imageUrls }}",
+        "videoUrl": "={{ $('Build the post from the row').first().json.post.videoUrl }}",
+        "additionalFields": {
+          "title": "={{ $('Build the post from the row').first().json.post.title }}",
+          "tiktokPrivacyLevel": "={{ $('Build the post from the row').first().json.post.tiktokPrivacyLevel }}",
+          "idempotencyKey": "={{ $('Build the post from the row').first().json.post.idempotencyKey }}"
+        }
+      },
+      "id": "47f096fd-3af0-4fe4-aed2-4a281c65f579",
+      "name": "Schedule the post with Socialync",
+      "type": "n8n-nodes-socialync.socialync",
+      "typeVersion": 1,
+      "position": [
+        1620,
+        -100
+      ],
+      "credentials": {
+        "socialyncApi": {
+          "id": null,
+          "name": "Socialync account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "REPLACE_WITH_YOUR_SPREADSHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "",
+          "cachedResultName": ""
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "Scheduled",
+            "Notes": "={{ 'Scheduled for ' + $json.scheduledAt + '. Post ID ' + $json.id }}",
+            "row_number": "={{ $('Get the next Ready row').first().json.row_number }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "Status",
+              "type": "string",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "Status",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Notes",
+              "type": "string",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "Notes",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "type": "number",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "row_number",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "readOnly": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "d20de9f0-7953-427c-a437-70c8c2f014fa",
+      "name": "Mark the row as Scheduled",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1850,
+        -180
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": null,
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "REPLACE_WITH_YOUR_SPREADSHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "",
+          "cachedResultName": ""
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "Needs fixing",
+            "Notes": "={{ $json.error }}",
+            "row_number": "={{ $('Get the next Ready row').first().json.row_number }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "Status",
+              "type": "string",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "Status",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Notes",
+              "type": "string",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "Notes",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "type": "number",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "row_number",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "readOnly": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "f02179f3-ed07-491e-b13e-79d462656047",
+      "name": "Mark the row as refused by Socialync",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1850,
+        20
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": null,
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "REPLACE_WITH_YOUR_SPREADSHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "",
+          "cachedResultName": ""
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "Needs fixing",
+            "Notes": "={{ $json.problem }}",
+            "row_number": "={{ $('Get the next Ready row').first().json.row_number }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "Status",
+              "type": "string",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "Status",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Notes",
+              "type": "string",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "Notes",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "type": "number",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "row_number",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "readOnly": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "99e80acf-d246-4286-855e-d3f1a414555c",
+      "name": "Mark the row as Needs fixing",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1390,
+        160
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": null,
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Pick a row\nEvery hour, take the first row marked Ready. An empty time uses the delay in Settings.",
+        "width": 700,
+        "height": 560,
+        "color": 7
+      },
+      "id": "12d3540c-deec-4641-ac08-95e303342f71",
+      "name": "Section: Pick a row",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        220,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Check the row\nThe row needs a caption and valid links. Rows with a problem go back to the sheet.",
+        "width": 440,
+        "height": 560,
+        "color": 7
+      },
+      "id": "1e9c95d7-ac8e-4a47-b985-5f81c7921a3e",
+      "name": "Section: Check the row",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        910,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Schedule it\nThe row is set to Scheduling first. Socialync then schedules the post and the sheet shows the post ID.",
+        "width": 750,
+        "height": 560,
+        "color": 7
+      },
+      "id": "4e017561-ac83-4698-80a0-0c7d276b2969",
+      "name": "Section: Schedule it",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1370,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Time zone\nSet your time zone in Settings. It reads the Publish at column.",
+        "width": 220,
+        "height": 130,
+        "color": 3
+      },
+      "id": "f5293c60-1465-4fce-9781-63a272de711f",
+      "name": "Warning: Time zone",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        685,
+        120
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Check for a Ready row every hour": {
+      "main": [
+        [
+          {
+            "node": "Get the next Ready row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get the next Ready row": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Build the post from the row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build the post from the row": {
+      "main": [
+        [
+          {
+            "node": "Row is valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Row is valid?": {
+      "main": [
+        [
+          {
+            "node": "Claim the row so no later run takes it",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark the row as Needs fixing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule the post with Socialync": {
+      "main": [
+        [
+          {
+            "node": "Mark the row as Scheduled",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark the row as refused by Socialync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim the row so no later run takes it": {
+      "main": [
+        [
+          {
+            "node": "Schedule the post with Socialync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

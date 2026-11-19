@@ -1,0 +1,272 @@
+{
+  "name": "Send a weekly social analytics digest for every brand to Slack with Socialync",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### How it works\nEvery Monday this workflow lists your Socialync profiles, reads last week's numbers for each one, and sends one Slack message that covers all of them. Each brand shows views, likes, comments, shares, followers and the change from the week before, with the platforms that earned the most views. This helps agencies and anyone who runs more than one brand. The workflow only reads. It cannot post or change anything in Socialync.\n\n### Setup\n1. Create an API key at https://socialync.io/go/n8n-node-keys and add it as a Socialync credential.\n2. Add a Slack credential.\n3. In Settings, enter your Slack channel ID.\n4. Run the workflow once by hand to see the first digest.\n\n### Customization\nChange the day and time in the trigger node. Set period to month in Settings for a monthly digest. YouTube numbers are shown as YouTube reports them, without extra math. A brand that returns no data appears in the message with the reason.\n\nAPI reference: https://socialync.io/go/n8n-node",
+        "width": 520,
+        "height": 600
+      },
+      "id": "ca976dd8-dd3c-4bc2-a883-a7f7ccab964c",
+      "name": "Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -760
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "7415834a-01af-49f2-9359-3c4c3690b70a",
+      "name": "Every Monday at 9am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fef926ae-518c-4154-b267-680dc656130f",
+              "name": "slackChannelId",
+              "value": "REPLACE_WITH_SLACK_CHANNEL_ID",
+              "type": "string"
+            },
+            {
+              "id": "a75b1f98-9a4a-4ed6-ab22-869167aa4407",
+              "name": "period",
+              "value": "week",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "4472e3b1-7e0b-4cde-aba0-6fc83ab74850",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        470,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "profile",
+        "operation": "getAll"
+      },
+      "id": "48a2cea6-c913-4821-967d-3b7bfd617768",
+      "name": "Get every profile",
+      "type": "n8n-nodes-socialync.socialync",
+      "typeVersion": 1,
+      "position": [
+        700,
+        0
+      ],
+      "credentials": {
+        "socialyncApi": {
+          "id": null,
+          "name": "Socialync account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "analytics",
+        "operation": "get",
+        "period": "={{ $('Settings').first().json.period }}",
+        "options": {
+          "breakdown": "by_platform",
+          "profileId": "={{ $json.id }}"
+        }
+      },
+      "id": "eddb79f1-22e1-4c06-ae5d-e07fe09b4366",
+      "name": "Read the numbers for each profile",
+      "type": "n8n-nodes-socialync.socialync",
+      "typeVersion": 1,
+      "position": [
+        930,
+        0
+      ],
+      "credentials": {
+        "socialyncApi": {
+          "id": null,
+          "name": "Socialync account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const profiles = $('Get every profile').all().map((i) => i.json);\nconst reports = $input.all().map((i) => i.json);\nconst num = (n) => (typeof n === 'number' && isFinite(n) ? n.toLocaleString('en-US') : 'n/a');\nconst signed = (n) => (typeof n === 'number' && isFinite(n) ? (n > 0 ? '+' : '') + n.toLocaleString('en-US') : 'n/a');\nconst change = (n) => (typeof n === 'number' ? ' (' + (n > 0 ? '+' : '') + n + '% vs the period before)' : '');\n\nconst blocks = [];\nreports.forEach((r, i) => {\n  const name = (profiles[i] && profiles[i].name) || 'Profile ' + (i + 1);\n  if (!r || r.error || !r.metrics) {\n    blocks.push('*' + name + '*\\nNo numbers this time: ' + ((r && r.error) || 'Socialync sent no data.'));\n    return;\n  }\n  const m = r.metrics;\n  const ch = r.changes || {};\n  const range = r.dateRange ? r.dateRange.start + ' to ' + r.dateRange.end : '';\n  const lines = [\n    '*' + name + '* ' + range,\n    'Views: ' + num(m.views) + change(ch.views),\n    'Likes: ' + num(m.likes) + change(ch.likes),\n    'Comments: ' + num(m.comments) + change(ch.comments),\n    'Shares: ' + num(m.shares) + change(ch.shares),\n    'Followers: ' + num(m.followers) + ' (net ' + signed(m.followerChange) + ')',\n  ];\n  // YouTube reports raw counts only, so it stays out of every ranking and percentage.\n  const ranked = Object.entries(r.platforms || {})\n    .filter(([platform, p]) => platform !== 'youtube' && p && p.metrics && typeof p.metrics.views === 'number')\n    .sort((a, b) => b[1].metrics.views - a[1].metrics.views)\n    .slice(0, 3);\n  if (ranked.length) lines.push('Most views: ' + ranked.map(([platform, p]) => platform + ' ' + num(p.metrics.views)).join(', '));\n  blocks.push(lines.join('\\n'));\n});\nif (!blocks.length) blocks.push('Socialync returned no profiles for this API key.');\nconst title = $('Settings').first().json.period === 'month' ? 'monthly' : 'weekly';\nreturn [{ json: { digestText: '*Your ' + title + ' Socialync digest*\\n\\n' + blocks.join('\\n\\n') } }];"
+      },
+      "id": "65e4e547-b3d5-4c76-9169-920c95f781e1",
+      "name": "Write the digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Settings').first().json.slackChannelId }}"
+        },
+        "text": "={{ $json.digestText }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "e7b6576d-94cd-409f-aae2-03be49e95738",
+      "name": "Post the digest to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1390,
+        0
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": null,
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Read your numbers\nTwo read only calls to Socialync: the list of profiles, then the numbers for each.",
+        "width": 480,
+        "height": 330,
+        "color": 7
+      },
+      "id": "e2cdf73a-fc3f-478f-81fe-9d1c4d3eccec",
+      "name": "Section: Read your numbers",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        680,
+        -190
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Send the digest\nOne Slack message for all brands.",
+        "width": 480,
+        "height": 330,
+        "color": 7
+      },
+      "id": "4123d2d3-ee9e-48b5-b68d-7f2cee76b663",
+      "name": "Section: Send the digest",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        -190
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Slack channel\nReplace the Slack channel ID in Settings before you run anything.",
+        "width": 220,
+        "height": 130,
+        "color": 3
+      },
+      "id": "d9667bff-ff2d-407f-b5d3-69397115d72a",
+      "name": "Warning: Slack channel",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        455,
+        110
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every Monday at 9am": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Get every profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get every profile": {
+      "main": [
+        [
+          {
+            "node": "Read the numbers for each profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read the numbers for each profile": {
+      "main": [
+        [
+          {
+            "node": "Write the digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write the digest": {
+      "main": [
+        [
+          {
+            "node": "Post the digest to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

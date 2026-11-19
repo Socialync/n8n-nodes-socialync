@@ -1,0 +1,517 @@
+{
+  "name": "Schedule posts from a Notion content database with Socialync",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### How it works\nWrite your posts in a Notion database and let this workflow send them out. Every hour it takes the first page whose Status is Ready. The page gives the caption, the platforms, the time and an optional image or video. The page changes to Scheduling first, so no later run can take it again. Socialync schedules the post, and the page changes to Scheduled with the post ID in Notes. A page with a problem changes to Needs fixing with the reason, so your team sees it where they work.\n\nPosts are scheduled without a manual approval step. You can cancel or change any scheduled post in Socialync until it goes out.\n\n### Setup\n1. Create an API key at https://socialync.io/go/n8n-node-keys and add it as a Socialync credential.\n2. Add a Notion credential and share your database with the integration.\n3. Give the database these properties: Name (title), Caption (text), Platforms (multi select or text), Publish at (date), Image (files), Video URL (url), Status (status with Ready, Scheduling, Scheduled and Needs fixing), Notes (text).\n4. Choose the database in the Notion node and set your time zone in Settings.\n\n### Customization\nA date with no time posts at 9am in your time zone. Leave Platforms empty to use the list in Settings. YouTube needs the page title. TikTok needs a privacy level in Settings.\n\nA page stuck on Scheduling means a run stopped part way. Check Socialync, then set the page to Scheduled or Ready.\n\nAPI reference: https://socialync.io/go/n8n-node",
+        "width": 520,
+        "height": 600
+      },
+      "id": "66e002a9-c07a-4178-b87a-cde17ce91f8e",
+      "name": "Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -760
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "3d2608c9-4cab-4f19-8885-1f59ca20d743",
+      "name": "Check for a Ready page every hour",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_DATABASE_ID"
+        },
+        "returnAll": false,
+        "limit": 1,
+        "simple": false,
+        "filterType": "json",
+        "filterJson": "{\"and\":[{\"property\":\"Status\",\"status\":{\"equals\":\"Ready\"}}]}",
+        "options": {}
+      },
+      "id": "44598fbc-24ef-44e5-9681-c39f64b16609",
+      "name": "Get the next Ready page",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        470,
+        0
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": null,
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "32b33d3c-39a2-4d9b-a47d-32b33f49fa9f",
+              "name": "profileId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "603699da-2ced-4aa2-9993-a1069ce39be2",
+              "name": "defaultPlatforms",
+              "value": "linkedin,facebook,threads,bluesky",
+              "type": "string"
+            },
+            {
+              "id": "687cbeaf-e4c9-4947-bf64-0d0876401550",
+              "name": "timezone",
+              "value": "America/New_York",
+              "type": "string"
+            },
+            {
+              "id": "b5301177-5bcf-4696-af1d-90ef7e36c038",
+              "name": "publishDelayMinutes",
+              "value": 60,
+              "type": "number"
+            },
+            {
+              "id": "68fe43b3-f23c-4faf-bd25-6550cc5d7c10",
+              "name": "tiktokPrivacyLevel",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "0364b59d-dfa8-4365-b4b6-5ad28c42d4e5",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ALLOWED = [\"facebook\",\"instagram\",\"linkedin\",\"twitter\",\"threads\",\"bluesky\",\"tiktok\",\"youtube\"];\nfunction parsePlatforms(raw) {\n  const list = (Array.isArray(raw) ? raw : String(raw || '').split(','))\n    .map((p) => String(p).trim().toLowerCase())\n    .filter(Boolean)\n    .map((p) => (p === 'x' ? 'twitter' : p));\n  const unknown = list.filter((p) => !ALLOWED.includes(p));\n  if (unknown.length) throw new Error('Socialync cannot post to: ' + unknown.join(', ') + '. Use: ' + ALLOWED.join(', ') + '.');\n  if (!list.length) throw new Error('Set at least one platform in the Settings node.');\n  return [...new Set(list)];\n}\n// '2026-11-12 09:30' is read in the Settings time zone. A value with Z or an offset is used as written.\nfunction parseWhen(text, zone) {\n  const s = String(text || '').trim();\n  if (!s) return null;\n  if (/([zZ]|[+-]\\d{2}:?\\d{2})$/.test(s)) {\n    const d = new Date(s);\n    return isNaN(d.getTime()) ? null : d;\n  }\n  const m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})(?:[ T](\\d{1,2}):(\\d{2}))?/);\n  if (!m) return null;\n  const [y, mo, d] = m.slice(1, 4).map(Number);\n  const h = m[4] === undefined ? 9 : Number(m[4]);\n  const mi = m[5] === undefined ? 0 : Number(m[5]);\n  const guess = Date.UTC(y, mo - 1, d, h, mi);\n  const offsetAt = (t) => {\n    const parts = new Intl.DateTimeFormat('en-US', {\n      timeZone: zone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',\n    }).formatToParts(new Date(t));\n    const v = {};\n    for (const p of parts) if (p.type !== 'literal') v[p.type] = Number(p.value);\n    return Date.UTC(v.year, v.month - 1, v.day, v.hour, v.minute, v.second) - t;\n  };\n  let utc = guess - offsetAt(guess);\n  utc = guess - offsetAt(utc);\n  return new Date(utc);\n}\n// A short hash of the content, so the key stays the same on every run for the same row.\nfunction shortHash(text) {\n  let h = 5381;\n  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;\n  return h.toString(36);\n}\n// Socialync accepts 1 to 255 letters, digits and _ . : - in an Idempotency Key.\nfunction safeKey(prefix, value) {\n  return (prefix + ':' + String(value)).replace(/[^A-Za-z0-9_.:-]/g, '-').slice(0, 200);\n}\nconst page = $('Get the next Ready page').first().json;\nconst s = $input.first().json;\nconst props = page.properties || {};\nconst problem = (message) => [{ json: { ok: false, problem: message } }];\n\n// Reads a Notion property value as plain text, whatever its type.\nfunction plain(p) {\n  if (!p) return '';\n  const join = (list) => (list || []).map((t) => t.plain_text || '').join('');\n  switch (p.type) {\n    case 'title': return join(p.title);\n    case 'rich_text': return join(p.rich_text);\n    case 'url': return p.url || '';\n    case 'select': return p.select ? p.select.name : '';\n    case 'status': return p.status ? p.status.name : '';\n    case 'multi_select': return (p.multi_select || []).map((o) => o.name).join(',');\n    case 'date': return p.date ? p.date.start : '';\n    case 'files': {\n      const f = (p.files || [])[0];\n      return f ? (f.external ? f.external.url : f.file ? f.file.url : '') : '';\n    }\n    default: return '';\n  }\n}\n\ntry {\n  const caption = plain(props.Caption).trim();\n  if (!caption) return problem('Caption is empty.');\n  const platforms = parsePlatforms(plain(props.Platforms).trim() || s.defaultPlatforms);\n  const imageUrl = plain(props.Image).trim();\n  const videoUrl = plain(props['Video URL']).trim();\n  if (imageUrl && videoUrl) return problem('Fill in only one of Image and Video URL.');\n  for (const link of [imageUrl, videoUrl]) {\n    if (link && !/^https:\\/\\//i.test(link)) return problem('Image and Video URL need public https links.');\n  }\n  if (platforms.includes('instagram') && !imageUrl && !videoUrl) return problem('Instagram needs an Image or a Video URL.');\n  const title = plain(props.Name).trim();\n  if (platforms.includes('youtube') && !title) return problem('YouTube needs the page title.');\n  const level = String(s.tiktokPrivacyLevel || '').trim();\n  if (platforms.includes('tiktok') && !level) return problem('TikTok needs a privacy level. Set tiktokPrivacyLevel in Settings.');\n\n  const earliest = Date.now() + Math.max(5, Number(s.publishDelayMinutes) || 60) * 60000;\n  let when = null;\n  const rawWhen = plain(props['Publish at']).trim();\n  if (rawWhen) {\n    try { when = parseWhen(rawWhen, s.timezone || 'UTC'); } catch (e) { return problem('The time zone \"' + s.timezone + '\" in Settings is not valid. Use a name like America/New_York.'); }\n    if (!when) return problem('Publish at is not a date Socialync can read.');\n  }\n  const scheduledAt = new Date(Math.max(earliest, when ? when.getTime() : 0)).toISOString();\n  return [{ json: { ok: true, post: {\n    profileId: String(s.profileId || '').trim(),\n    platforms,\n    caption,\n    scheduledAt,\n    mediaSource: videoUrl ? 'videoUrl' : imageUrl ? 'imageUrls' : 'none',\n    imageUrls: imageUrl,\n    videoUrl,\n    title,\n    tiktokPrivacyLevel: level,\n    idempotencyKey: safeKey('notion', page.id + ':' + shortHash(rawWhen + '|' + platforms.join(',') + '|' + caption)),\n  } } }];\n} catch (e) {\n  return problem(e.message);\n}"
+      },
+      "id": "be1010c4-37a0-41e7-bddd-cb237772b0f1",
+      "name": "Build the post from the page",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        930,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "fb0326b3-2874-4d60-82d8-3e6187124f28",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f24f9e48-55b2-4269-a18c-88d60c7e59b8",
+      "name": "Page is valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Get the next Ready page').first().json.id }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status|status",
+              "type": "status",
+              "statusValue": "Scheduling"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d7abfab8-13c9-413a-bcba-b7da99973931",
+      "name": "Claim the page so no later run takes it",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1390,
+        -100
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": null,
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "post",
+        "operation": "schedule",
+        "profileId": "={{ $('Build the post from the page').first().json.post.profileId }}",
+        "platforms": "={{ $('Build the post from the page').first().json.post.platforms }}",
+        "caption": "={{ $('Build the post from the page').first().json.post.caption }}",
+        "scheduledAt": "={{ $('Build the post from the page').first().json.post.scheduledAt }}",
+        "mediaSource": "={{ $('Build the post from the page').first().json.post.mediaSource }}",
+        "imageUrls": "={{ $('Build the post from the page').first().json.post.imageUrls }}",
+        "videoUrl": "={{ $('Build the post from the page').first().json.post.videoUrl }}",
+        "additionalFields": {
+          "title": "={{ $('Build the post from the page').first().json.post.title }}",
+          "tiktokPrivacyLevel": "={{ $('Build the post from the page').first().json.post.tiktokPrivacyLevel }}",
+          "idempotencyKey": "={{ $('Build the post from the page').first().json.post.idempotencyKey }}"
+        }
+      },
+      "id": "cc833b5c-2c14-4d62-a67e-dab9fe96472e",
+      "name": "Schedule the post with Socialync",
+      "type": "n8n-nodes-socialync.socialync",
+      "typeVersion": 1,
+      "position": [
+        1620,
+        -100
+      ],
+      "credentials": {
+        "socialyncApi": {
+          "id": null,
+          "name": "Socialync account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Get the next Ready page').first().json.id }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status|status",
+              "type": "status",
+              "statusValue": "Scheduled"
+            },
+            {
+              "key": "Notes|rich_text",
+              "type": "rich_text",
+              "textContent": "={{ 'Scheduled for ' + $json.scheduledAt + '. Post ID ' + $json.id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "87d93538-9739-4d58-8075-ea9c3dd3527c",
+      "name": "Mark the page as Scheduled",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1850,
+        -180
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": null,
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Get the next Ready page').first().json.id }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status|status",
+              "type": "status",
+              "statusValue": "Needs fixing"
+            },
+            {
+              "key": "Notes|rich_text",
+              "type": "rich_text",
+              "textContent": "={{ $json.error }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b8142b1f-e0f4-43f1-8565-035e08fc4465",
+      "name": "Mark the page as refused by Socialync",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1850,
+        20
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": null,
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Get the next Ready page').first().json.id }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status|status",
+              "type": "status",
+              "statusValue": "Needs fixing"
+            },
+            {
+              "key": "Notes|rich_text",
+              "type": "rich_text",
+              "textContent": "={{ $('Build the post from the page').first().json.problem }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cb8cecd3-3087-4f27-b993-8b88270f62b5",
+      "name": "Mark the page as Needs fixing",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1390,
+        160
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": null,
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Pick a page\nEvery hour, take the first page with Status Ready. A date with no time posts at 9am.",
+        "width": 700,
+        "height": 560,
+        "color": 7
+      },
+      "id": "fd6fa9f9-f6d4-43cb-88c0-36c2bb6b3e93",
+      "name": "Section: Pick a page",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        220,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Check the page\nThe page needs a caption and valid links. A problem goes back to Notes.",
+        "width": 440,
+        "height": 560,
+        "color": 7
+      },
+      "id": "a1eaabd9-4b77-4b21-bb87-3cd781ed1913",
+      "name": "Section: Check the page",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        910,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Schedule it\nThe page is set to Scheduling first. Socialync then schedules the post and Notion shows the post ID.",
+        "width": 750,
+        "height": 560,
+        "color": 7
+      },
+      "id": "4491a4aa-e0ec-47b3-836a-e47d939aa1f7",
+      "name": "Section: Schedule it",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1370,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Status property\nStatus must be a Notion status property with Ready, Scheduling, Scheduled and Needs fixing. Without Scheduling, nothing is posted.",
+        "width": 220,
+        "height": 150,
+        "color": 3
+      },
+      "id": "4f0159e1-4b45-464c-a1f2-f22945479654",
+      "name": "Warning: Status property",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        685,
+        120
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Check for a Ready page every hour": {
+      "main": [
+        [
+          {
+            "node": "Get the next Ready page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get the next Ready page": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Build the post from the page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build the post from the page": {
+      "main": [
+        [
+          {
+            "node": "Page is valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Page is valid?": {
+      "main": [
+        [
+          {
+            "node": "Claim the page so no later run takes it",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark the page as Needs fixing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule the post with Socialync": {
+      "main": [
+        [
+          {
+            "node": "Mark the page as Scheduled",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark the page as refused by Socialync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim the page so no later run takes it": {
+      "main": [
+        [
+          {
+            "node": "Schedule the post with Socialync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

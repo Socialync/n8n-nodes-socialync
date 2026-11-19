@@ -1,0 +1,551 @@
+{
+  "name": "Repost your evergreen social posts every week with Airtable and Socialync",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### How it works\nGood posts should not be used once. Every Monday this workflow takes the evergreen post in your Airtable table that was posted the longest time ago, or never, and schedules it again with Socialync. It then writes the date and the number of times posted back to the record, so the next week picks a different post. You decide what counts as evergreen by ticking a box. Socialync's API has no per post results yet, so you choose the evergreen posts in your table.\n\nPosts are scheduled without a manual approval step. You can cancel or change any scheduled post in Socialync until it goes out.\n\n### Setup\n1. Create an API key at https://socialync.io/go/n8n-node-keys and add it as a Socialync credential.\n2. Add an Airtable token credential.\n3. Make a table with these fields: Caption, Platforms, Image URL, Evergreen (checkbox), Last Posted (date), Times Posted (number), Notes.\n4. Choose the base and the table in all three Airtable nodes.\n5. Tick Evergreen on a few records and connect your platforms in Socialync.\n\n### Customization\nChange the day and time in the trigger node. Change the platforms and the delay in Settings.\n\nAPI reference: https://socialync.io/go/n8n-node",
+        "width": 520,
+        "height": 600
+      },
+      "id": "5d208f98-0500-4ba6-9885-eb2a15f8bd33",
+      "name": "Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -760
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "53196afc-6aa2-483c-9863-982f6fe6dc41",
+      "name": "Every Monday at 9am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "4a9c6528-c734-47f5-ab8d-88a55d68a664",
+              "name": "profileId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "db224003-7188-4ccd-ba25-bcb3f9a361c4",
+              "name": "defaultPlatforms",
+              "value": "linkedin,facebook,threads,bluesky",
+              "type": "string"
+            },
+            {
+              "id": "6498e4bb-3384-49c0-9877-2683720a4d10",
+              "name": "publishDelayMinutes",
+              "value": 60,
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "9d55a196-c854-4a1e-8865-eb79ac3e37b0",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        470,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_BASE_ID"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_TABLE_ID"
+        },
+        "filterByFormula": "{Evergreen} = 1",
+        "returnAll": false,
+        "limit": 1,
+        "options": {},
+        "sort": {
+          "property": [
+            {
+              "field": "Last Posted",
+              "direction": "asc"
+            }
+          ]
+        }
+      },
+      "id": "cec4f685-3dcc-4d5d-9b84-cb2e068b429b",
+      "name": "Find the evergreen post",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        700,
+        0
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": null,
+          "name": "Airtable token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ALLOWED = [\"facebook\",\"instagram\",\"linkedin\",\"twitter\",\"threads\",\"bluesky\",\"tiktok\",\"youtube\"];\nfunction parsePlatforms(raw) {\n  const list = (Array.isArray(raw) ? raw : String(raw || '').split(','))\n    .map((p) => String(p).trim().toLowerCase())\n    .filter(Boolean)\n    .map((p) => (p === 'x' ? 'twitter' : p));\n  const unknown = list.filter((p) => !ALLOWED.includes(p));\n  if (unknown.length) throw new Error('Socialync cannot post to: ' + unknown.join(', ') + '. Use: ' + ALLOWED.join(', ') + '.');\n  if (!list.length) throw new Error('Set at least one platform in the Settings node.');\n  return [...new Set(list)];\n}\n// Socialync accepts 1 to 255 letters, digits and _ . : - in an Idempotency Key.\nfunction safeKey(prefix, value) {\n  return (prefix + ':' + String(value)).replace(/[^A-Za-z0-9_.:-]/g, '-').slice(0, 200);\n}\nconst s = $('Settings').first().json;\nconst row = $input.first().json;\nconst problem = (message) => [{ json: { ok: false, problem: message } }];\ntry {\n  const caption = String(row.Caption || '').trim();\n  if (!caption) return problem('The Caption of this record is empty.');\n  const platforms = parsePlatforms(String(row.Platforms || '').trim() || s.defaultPlatforms);\n  const imageUrl = String(row['Image URL'] || '').trim();\n  if (imageUrl && !/^https:\\/\\//i.test(imageUrl)) return problem('Image URL needs a public https link.');\n  if (platforms.includes('instagram') && !imageUrl) return problem('Instagram needs an Image URL.');\n  if (platforms.some((p) => p === 'tiktok' || p === 'youtube')) return problem('This template posts text and images. Remove tiktok and youtube from Platforms.');\n  const now = new Date();\n  const start = Date.UTC(now.getUTCFullYear(), 0, 1);\n  const week = Math.floor((now.getTime() - start) / (7 * 86400000)) + 1;\n  const delay = Math.max(5, Number(s.publishDelayMinutes) || 60);\n  return [{ json: {\n    ok: true,\n    post: {\n      profileId: String(s.profileId || '').trim(),\n      platforms,\n      caption,\n      scheduledAt: new Date(Date.now() + delay * 60000).toISOString(),\n      mediaSource: imageUrl ? 'imageUrls' : 'none',\n      imageUrls: imageUrl,\n      idempotencyKey: safeKey('evergreen', row.id + ':' + now.getUTCFullYear() + 'w' + week),\n    },\n    timesPosted: (Number(row['Times Posted']) || 0) + 1,\n    postedOn: now.toISOString().slice(0, 10),\n  } }];\n} catch (e) {\n  return problem(e.message);\n}"
+      },
+      "id": "8dbbd523-885e-4484-88d5-09e2b65f0449",
+      "name": "Build the post from the record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        930,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c8c51f04-769a-4ada-a999-2c4137debad8",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3b3a1b90-c7a9-497f-a123-5b4b9a78e142",
+      "name": "Record is valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "post",
+        "operation": "schedule",
+        "profileId": "={{ $json.post.profileId }}",
+        "platforms": "={{ $json.post.platforms }}",
+        "caption": "={{ $json.post.caption }}",
+        "scheduledAt": "={{ $json.post.scheduledAt }}",
+        "mediaSource": "={{ $json.post.mediaSource }}",
+        "imageUrls": "={{ $json.post.imageUrls }}",
+        "additionalFields": {
+          "idempotencyKey": "={{ $json.post.idempotencyKey }}"
+        }
+      },
+      "id": "ba5e6247-710d-4ceb-a9c8-634827e42b62",
+      "name": "Schedule the post with Socialync",
+      "type": "n8n-nodes-socialync.socialync",
+      "typeVersion": 1,
+      "position": [
+        1390,
+        -100
+      ],
+      "credentials": {
+        "socialyncApi": {
+          "id": null,
+          "name": "Socialync account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_BASE_ID"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_TABLE_ID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Find the evergreen post').first().json.id }}",
+            "Last Posted": "={{ $('Build the post from the record').first().json.postedOn }}",
+            "Times Posted": "={{ $('Build the post from the record').first().json.timesPosted }}",
+            "Notes": "={{ 'Scheduled for ' + $json.scheduledAt + '. Post ID ' + $json.id }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "type": "string",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "id",
+              "defaultMatch": true,
+              "canBeUsedToMatch": true,
+              "readOnly": true
+            },
+            {
+              "id": "Last Posted",
+              "type": "string",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "Last Posted",
+              "defaultMatch": false,
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Times Posted",
+              "type": "number",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "Times Posted",
+              "defaultMatch": false,
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Notes",
+              "type": "string",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "Notes",
+              "defaultMatch": false,
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "99f98f97-988d-4f17-ac56-ca183b9d89cd",
+      "name": "Mark the record as posted",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        1620,
+        -180
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": null,
+          "name": "Airtable token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_BASE_ID"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_TABLE_ID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Find the evergreen post').first().json.id }}",
+            "Notes": "={{ $json.error }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "type": "string",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "id",
+              "defaultMatch": true,
+              "canBeUsedToMatch": true,
+              "readOnly": true
+            },
+            {
+              "id": "Notes",
+              "type": "string",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "Notes",
+              "defaultMatch": false,
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "66c486d8-1a0b-4199-af89-391524b7b41b",
+      "name": "Note why Socialync refused the post",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        1620,
+        20
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": null,
+          "name": "Airtable token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_BASE_ID"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_TABLE_ID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Find the evergreen post').first().json.id }}",
+            "Notes": "={{ $('Build the post from the record').first().json.problem }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "type": "string",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "id",
+              "defaultMatch": true,
+              "canBeUsedToMatch": true,
+              "readOnly": true
+            },
+            {
+              "id": "Notes",
+              "type": "string",
+              "display": true,
+              "removed": false,
+              "required": false,
+              "displayName": "Notes",
+              "defaultMatch": false,
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "b15af48d-58c3-476e-bf71-240107f4e66c",
+      "name": "Note why the record was skipped",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        1390,
+        160
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": null,
+          "name": "Airtable token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Pick a post\nTake the evergreen record that was posted longest ago. A record never posted comes first.",
+        "width": 700,
+        "height": 560,
+        "color": 7
+      },
+      "id": "dbf644f0-3837-4a2e-a419-c05e9e81abba",
+      "name": "Section: Pick a post",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        220,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Check the record\nA record needs a caption and valid links. A problem is written to Notes.",
+        "width": 440,
+        "height": 560,
+        "color": 7
+      },
+      "id": "7bc1bb4d-6c9b-4509-b187-9dddca7bc6b6",
+      "name": "Section: Check the record",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        910,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Schedule it\nSocialync schedules the post. The record gets the date and the count.",
+        "width": 520,
+        "height": 560,
+        "color": 7
+      },
+      "id": "615aef4a-17d5-4277-9cca-71c1a1aa2c8a",
+      "name": "Section: Schedule it",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1370,
+        -250
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every Monday at 9am": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Find the evergreen post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find the evergreen post": {
+      "main": [
+        [
+          {
+            "node": "Build the post from the record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build the post from the record": {
+      "main": [
+        [
+          {
+            "node": "Record is valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record is valid?": {
+      "main": [
+        [
+          {
+            "node": "Schedule the post with Socialync",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Note why the record was skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule the post with Socialync": {
+      "main": [
+        [
+          {
+            "node": "Mark the record as posted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Note why Socialync refused the post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

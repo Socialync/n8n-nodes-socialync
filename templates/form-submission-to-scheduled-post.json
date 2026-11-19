@@ -1,0 +1,409 @@
+{
+  "name": "Let your team schedule social posts from a web form with Socialync",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### How it works\nThis workflow gives your team a simple web form for posting. Someone writes a caption, ticks the platforms, adds a picture and picks a time. The workflow uploads the picture to Socialync and schedules the post. A person who leaves the time empty gets a post ten minutes later, which leaves time to cancel it in Socialync. The form asks for a user name and password, because anyone who can open it can post to your accounts.\n\nPosts are scheduled without a manual approval step. You can cancel or change any scheduled post in Socialync until it goes out.\n\n### Setup\n1. Create an API key at https://socialync.io/go/n8n-node-keys and add it as a Socialync credential.\n2. Create a Basic Auth credential with a user name and password for the form, and pick it on the form node.\n3. In Settings, choose the time zone and the platforms people may pick.\n4. Activate the workflow and open the production form address. Test with a short caption.\n\n### Customization\nThe form lists the platforms you put in its checkbox field. Add or remove choices there and in Settings together. A picture is optional. TikTok and YouTube need a video, so this form leaves them out.\n\nAPI reference: https://socialync.io/go/n8n-node",
+        "width": 520,
+        "height": 600
+      },
+      "id": "da48d030-b51d-4d62-885b-206522117757",
+      "name": "Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -760
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "basicAuth",
+        "formTitle": "Schedule a social post",
+        "formDescription": "Write the post, choose where it goes and when. Leave the time empty to post in about ten minutes.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Caption",
+              "fieldType": "textarea",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Platforms",
+              "fieldType": "checkbox",
+              "requiredField": true,
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "linkedin"
+                  },
+                  {
+                    "option": "facebook"
+                  },
+                  {
+                    "option": "instagram"
+                  },
+                  {
+                    "option": "threads"
+                  },
+                  {
+                    "option": "bluesky"
+                  },
+                  {
+                    "option": "twitter"
+                  }
+                ]
+              }
+            },
+            {
+              "fieldLabel": "Picture",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".jpg,.jpeg,.png,.gif,.webp",
+              "requiredField": false
+            },
+            {
+              "fieldLabel": "Publish at (like 2026-11-12 09:30)",
+              "fieldType": "text",
+              "requiredField": false
+            }
+          ]
+        },
+        "options": {
+          "formSubmittedText": "Thanks. Your post is being scheduled."
+        }
+      },
+      "id": "46532547-eca1-446d-9a60-e94dc73f6ee1",
+      "name": "Post form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        240,
+        0
+      ],
+      "webhookId": "1d31f1f7-ffb6-4840-b6b4-41022bb61686",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": null,
+          "name": "Form login"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5e6ca5a6-cff1-4587-8c11-27de94bfb2d9",
+              "name": "profileId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "46022950-e843-4817-b382-9df724eed755",
+              "name": "timezone",
+              "value": "America/New_York",
+              "type": "string"
+            },
+            {
+              "id": "917d0182-3c04-4027-b5ec-c93c1d7dd13a",
+              "name": "publishDelayMinutes",
+              "value": 10,
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "dd3ac27b-61d0-4252-9e1b-748142a1ae44",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        470,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ALLOWED = [\"facebook\",\"instagram\",\"linkedin\",\"twitter\",\"threads\",\"bluesky\",\"tiktok\",\"youtube\"];\nfunction parsePlatforms(raw) {\n  const list = (Array.isArray(raw) ? raw : String(raw || '').split(','))\n    .map((p) => String(p).trim().toLowerCase())\n    .filter(Boolean)\n    .map((p) => (p === 'x' ? 'twitter' : p));\n  const unknown = list.filter((p) => !ALLOWED.includes(p));\n  if (unknown.length) throw new Error('Socialync cannot post to: ' + unknown.join(', ') + '. Use: ' + ALLOWED.join(', ') + '.');\n  if (!list.length) throw new Error('Set at least one platform in the Settings node.');\n  return [...new Set(list)];\n}\n// '2026-11-12 09:30' is read in the Settings time zone. A value with Z or an offset is used as written.\nfunction parseWhen(text, zone) {\n  const s = String(text || '').trim();\n  if (!s) return null;\n  if (/([zZ]|[+-]\\d{2}:?\\d{2})$/.test(s)) {\n    const d = new Date(s);\n    return isNaN(d.getTime()) ? null : d;\n  }\n  const m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})(?:[ T](\\d{1,2}):(\\d{2}))?/);\n  if (!m) return null;\n  const [y, mo, d] = m.slice(1, 4).map(Number);\n  const h = m[4] === undefined ? 9 : Number(m[4]);\n  const mi = m[5] === undefined ? 0 : Number(m[5]);\n  const guess = Date.UTC(y, mo - 1, d, h, mi);\n  const offsetAt = (t) => {\n    const parts = new Intl.DateTimeFormat('en-US', {\n      timeZone: zone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',\n    }).formatToParts(new Date(t));\n    const v = {};\n    for (const p of parts) if (p.type !== 'literal') v[p.type] = Number(p.value);\n    return Date.UTC(v.year, v.month - 1, v.day, v.hour, v.minute, v.second) - t;\n  };\n  let utc = guess - offsetAt(guess);\n  utc = guess - offsetAt(utc);\n  return new Date(utc);\n}\n// Socialync accepts 1 to 255 letters, digits and _ . : - in an Idempotency Key.\nfunction safeKey(prefix, value) {\n  return (prefix + ':' + String(value)).replace(/[^A-Za-z0-9_.:-]/g, '-').slice(0, 200);\n}\nconst s = $input.item.json;\nconst caption = String(s.Caption || '').trim();\nif (!caption) throw new Error('The caption is empty.');\nconst platforms = parsePlatforms(s.Platforms).filter((p) => !['tiktok', 'youtube'].includes(p));\nif (!platforms.length) throw new Error('Choose at least one platform.');\nif (platforms.includes('instagram') && !($input.item.binary && Object.keys($input.item.binary).length)) throw new Error('Instagram needs a picture. Add one or untick Instagram.');\nconst earliest = Date.now() + Math.max(5, Number(s.publishDelayMinutes) || 10) * 60000;\nconst rawWhen = String(s['Publish at (like 2026-11-12 09:30)'] || '').trim();\nlet when = null;\nif (rawWhen) {\n  when = parseWhen(rawWhen, s.timezone || 'UTC');\n  if (!when) throw new Error('The time must look like 2026-11-12 09:30.');\n}\nconst scheduledAt = new Date(Math.max(earliest, when ? when.getTime() : 0)).toISOString();\nreturn { json: { post: {\n  profileId: String(s.profileId || '').trim(),\n  platforms,\n  caption,\n  scheduledAt,\n  idempotencyKey: safeKey('form', $execution.id),\n} }, binary: $input.item.binary };",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "63067ac5-f8ec-48b2-87be-22f3a4365c7f",
+      "name": "Build the post from the form",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "b7b4fa06-f080-4e64-81bb-e344b9a31bb5",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ Object.keys($binary || {}).length > 0 }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "32157f29-0301-4d05-90dd-67e3b1329437",
+      "name": "Picture attached?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        930,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "media",
+        "operation": "upload",
+        "source": "binaryData",
+        "binaryPropertyName": "={{ Object.keys($binary)[0] }}"
+      },
+      "id": "12a112da-aaf0-4a3c-9780-c6676bd7bc3b",
+      "name": "Upload the picture to Socialync",
+      "type": "n8n-nodes-socialync.socialync",
+      "typeVersion": 1,
+      "position": [
+        1160,
+        -100
+      ],
+      "credentials": {
+        "socialyncApi": {
+          "id": null,
+          "name": "Socialync account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "post",
+        "operation": "schedule",
+        "profileId": "={{ $('Build the post from the form').item.json.post.profileId }}",
+        "platforms": "={{ $('Build the post from the form').item.json.post.platforms }}",
+        "caption": "={{ $('Build the post from the form').item.json.post.caption }}",
+        "scheduledAt": "={{ $('Build the post from the form').item.json.post.scheduledAt }}",
+        "mediaSource": "={{ $json.mediaId ? 'mediaId' : 'none' }}",
+        "mediaId": "={{ $json.mediaId || '' }}",
+        "additionalFields": {
+          "idempotencyKey": "={{ $('Build the post from the form').item.json.post.idempotencyKey }}"
+        }
+      },
+      "id": "8dde374c-7838-408c-9529-045d7965f808",
+      "name": "Schedule the post with Socialync",
+      "type": "n8n-nodes-socialync.socialync",
+      "typeVersion": 1,
+      "position": [
+        1390,
+        0
+      ],
+      "credentials": {
+        "socialyncApi": {
+          "id": null,
+          "name": "Socialync account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ac68a91b-573f-4721-9f1a-04064eb71abb",
+              "name": "postId",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "2c7b071e-b1f5-424d-9ca4-581a149e46ca",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "844d7604-a8ff-4d15-b740-8c7aec4ecb11",
+              "name": "scheduledAt",
+              "value": "={{ $json.scheduledAt }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "c7919ae3-4164-404d-93e8-a10e6b847a18",
+      "name": "Show the scheduled post",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1620,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Take the form\nSomeone submits the form. Settings holds the time zone and the delay.",
+        "width": 480,
+        "height": 560,
+        "color": 7
+      },
+      "id": "90ce3824-f33f-4986-ad1a-678188bdf7db",
+      "name": "Section: Take the form",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        220,
+        -190
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Add the picture\nA picture is uploaded to Socialync first, which gives a media ID.",
+        "width": 480,
+        "height": 560,
+        "color": 7
+      },
+      "id": "7f2631c0-d31d-4d90-a3f1-2b6cd7365dbb",
+      "name": "Section: Add the picture",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        910,
+        -190
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Schedule it\nSocialync schedules the post. The form answer says it is being scheduled.",
+        "width": 480,
+        "height": 560,
+        "color": 7
+      },
+      "id": "e4de92e7-4f2b-495f-ab5e-3bbf8704fb0d",
+      "name": "Section: Schedule it",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1370,
+        -190
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Protect the form\nPick the Basic Auth credential on the form node before you activate this workflow.",
+        "width": 220,
+        "height": 150,
+        "color": 3
+      },
+      "id": "d778f956-5291-4851-9fd9-573d3224bb6b",
+      "name": "Warning: Protect the form",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        225,
+        110
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Post form": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Build the post from the form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build the post from the form": {
+      "main": [
+        [
+          {
+            "node": "Picture attached?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Picture attached?": {
+      "main": [
+        [
+          {
+            "node": "Upload the picture to Socialync",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Schedule the post with Socialync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload the picture to Socialync": {
+      "main": [
+        [
+          {
+            "node": "Schedule the post with Socialync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule the post with Socialync": {
+      "main": [
+        [
+          {
+            "node": "Show the scheduled post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

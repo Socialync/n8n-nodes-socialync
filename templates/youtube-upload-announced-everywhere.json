@@ -1,0 +1,484 @@
+{
+  "name": "Announce every new YouTube video on your social accounts with Socialync",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### How it works\nWhen your YouTube channel publishes a video, this workflow announces it on the other platforms you use. It reads the channel feed, picks the HD thumbnail when YouTube has one, and builds an image post with a caption that fits each platform. Socialync checks the post first and leaves out any platform that cannot take it, such as an account that needs a reconnect. The platforms that pass are scheduled. The video ID is the idempotency key, so a repeated call within 24 hours does not announce the video twice.\n\nPosts are scheduled without a manual approval step. You can cancel or change any scheduled post in Socialync until it goes out.\n\n### Setup\n1. Create an API key at https://socialync.io/go/n8n-node-keys and add it as a Socialync credential.\n2. Replace the channel ID in the feed address of the trigger. The channel ID starts with UC. YouTube shows it in your channel's advanced settings.\n3. In Settings, choose the platforms and the intro line. Connect those platforms in Socialync first.\n4. Publish a test video or use an older channel to run it once.\n\n### Customization\nChange the intro line, the Instagram link line and the delay in Settings. Instagram needs an image, and this workflow sends one. It sends image posts, and TikTok and YouTube need a video, so it leaves them out.\n\nAPI reference: https://socialync.io/go/n8n-node",
+        "width": 520,
+        "height": 600
+      },
+      "id": "7197d2db-6879-47d5-9fff-2826d2ac337f",
+      "name": "Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -760
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 30,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=REPLACE_WITH_YOUR_CHANNEL_ID"
+      },
+      "id": "ccecfd2c-897d-4ccf-b064-8dcc526b35d4",
+      "name": "YouTube Feed Trigger",
+      "type": "n8n-nodes-base.rssFeedReadTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0a78ae11-93da-4240-bf65-6431eb8bde35",
+              "name": "profileId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "e2ffd439-50e6-41fd-ab43-bbfcb490d1ca",
+              "name": "platforms",
+              "value": "linkedin,facebook,instagram,threads,bluesky",
+              "type": "string"
+            },
+            {
+              "id": "b11392c4-2ce3-4d03-9649-fdd517ec0f34",
+              "name": "publishDelayMinutes",
+              "value": 30,
+              "type": "number"
+            },
+            {
+              "id": "6e6ed38a-b193-428d-89c6-a2a91f972efe",
+              "name": "introLine",
+              "value": "New video:",
+              "type": "string"
+            },
+            {
+              "id": "b74f0689-0693-4e04-98be-70b0920d2af7",
+              "name": "instagramLinkLine",
+              "value": "Link in bio.",
+              "type": "string"
+            },
+            {
+              "id": "3bae2fdc-2ad0-496a-bc08-6ebad4558f2d",
+              "name": "videoTitle",
+              "value": "={{ $json.title }}",
+              "type": "string"
+            },
+            {
+              "id": "c7abd882-cd9b-414b-bd7b-65310e3a44e5",
+              "name": "videoLink",
+              "value": "={{ $json.link }}",
+              "type": "string"
+            },
+            {
+              "id": "2f1efcfa-e80d-4650-acb6-d2a6365714f3",
+              "name": "videoId",
+              "value": "={{ ($json.id || '').replace('yt:video:', '') || (($json.link || '').split('v=')[1] || '').split('&')[0] }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "81a78556-6660-4974-92b3-c20cd12cc323",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        470,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "HEAD",
+        "url": "=https://i.ytimg.com/vi/{{ $json.videoId }}/maxresdefault.jpg",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "fed7fb34-47fc-4e40-bec5-a965cf132a53",
+      "name": "Check for an HD thumbnail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ALLOWED = [\"facebook\",\"instagram\",\"linkedin\",\"twitter\",\"threads\",\"bluesky\",\"tiktok\",\"youtube\"];\nfunction parsePlatforms(raw) {\n  const list = (Array.isArray(raw) ? raw : String(raw || '').split(','))\n    .map((p) => String(p).trim().toLowerCase())\n    .filter(Boolean)\n    .map((p) => (p === 'x' ? 'twitter' : p));\n  const unknown = list.filter((p) => !ALLOWED.includes(p));\n  if (unknown.length) throw new Error('Socialync cannot post to: ' + unknown.join(', ') + '. Use: ' + ALLOWED.join(', ') + '.');\n  if (!list.length) throw new Error('Set at least one platform in the Settings node.');\n  return [...new Set(list)];\n}\nfunction fit(text, max) {\n  const t = String(text).replace(/[ \\t]+\\n/g, '\\n').trim();\n  if (t.length <= max) return t;\n  const cut = t.slice(0, Math.max(0, max - 3));\n  return cut.replace(/\\s+\\S*$/, '') + '...';\n}\n// Socialync accepts 1 to 255 letters, digits and _ . : - in an Idempotency Key.\nfunction safeKey(prefix, value) {\n  return (prefix + ':' + String(value)).replace(/[^A-Za-z0-9_.:-]/g, '-').slice(0, 200);\n}\nconst s = $('Settings').item.json;\nconst head = $input.item.json || {};\nif (!s.videoId) throw new Error('Could not find the video ID in the feed item. Check the feed address.');\nconst thumbnail = 'https://i.ytimg.com/vi/' + s.videoId + '/' + (Number(head.statusCode) === 200 ? 'maxresdefault' : 'hqdefault') + '.jpg';\nconst title = String(s.videoTitle || '').trim();\nconst link = String(s.videoLink || '').trim();\nconst intro = String(s.introLine || 'New video:').trim();\nconst igLine = String(s.instagramLinkLine || 'Link in bio.').trim();\nconst platforms = parsePlatforms(s.platforms).filter((p) => !['tiktok', 'youtube'].includes(p));\nif (!platforms.length) throw new Error('Choose at least one platform other than tiktok and youtube in Settings.');\n\nconst short = (max) => fit(intro + ' ' + title, Math.max(40, max - link.length - 2)) + '\\n\\n' + link;\nconst custom = {};\nfor (const p of platforms) {\n  if (p === 'bluesky') custom.bluesky = { customCaption: short(300) };\n  if (p === 'threads') custom.threads = { customCaption: short(500) };\n  if (p === 'twitter') custom.twitter = { customCaption: short(280) };\n  if (p === 'instagram') custom.instagram = { customCaption: fit(intro + ' ' + title, 2000) + '\\n\\n' + igLine };\n}\nconst delay = Math.max(5, Number(s.publishDelayMinutes) || 30);\nreturn { json: {\n  profileId: String(s.profileId || '').trim(),\n  platforms,\n  caption: intro + ' ' + title + '\\n\\nWatch it here: ' + link,\n  imageUrl: thumbnail,\n  platformSpecificSettings: Object.keys(custom).length ? JSON.stringify(custom) : '',\n  scheduledAt: new Date(Date.now() + delay * 60000).toISOString(),\n  idempotencyKey: safeKey('youtube', s.videoId),\n} };",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "9dc734a7-c09e-4da2-a8d4-a1ac794035c1",
+      "name": "Build the post",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        930,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "post",
+        "operation": "validate",
+        "profileId": "={{ $json.profileId }}",
+        "platforms": "={{ $json.platforms }}",
+        "caption": "={{ $json.caption }}",
+        "mediaSource": "imageUrls",
+        "imageUrls": "={{ $json.imageUrl }}",
+        "additionalFields": {
+          "scheduledAt": "={{ $json.scheduledAt }}",
+          "platformSpecificSettings": "={{ $json.platformSpecificSettings }}"
+        }
+      },
+      "id": "eed6e4a6-633d-4222-9847-90af765fce14",
+      "name": "Check the post with Socialync",
+      "type": "n8n-nodes-socialync.socialync",
+      "typeVersion": 1,
+      "position": [
+        1160,
+        0
+      ],
+      "credentials": {
+        "socialyncApi": {
+          "id": null,
+          "name": "Socialync account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const post = $('Build the post').item.json;\nconst check = $input.item.json || {};\nconst results = Array.isArray(check.platforms) ? check.platforms : [];\nconst ready = results.filter((p) => p.ok === true).map((p) => p.platform);\nconst skipped = results\n  .filter((p) => p.ok !== true)\n  .map((p) => p.platform + ': ' + (p.errors || []).map((e) => e.message).join(' '));\nconst globalProblems = (check.globalErrors || []).map((e) => e.message);\nlet custom = {};\ntry { custom = post.platformSpecificSettings ? JSON.parse(post.platformSpecificSettings) : {}; } catch (e) { custom = {}; }\nfor (const key of Object.keys(custom)) if (!ready.includes(key)) delete custom[key];\nreturn { json: {\n  ...post,\n  ok: ready.length > 0 && globalProblems.length === 0,\n  platforms: ready,\n  skipped,\n  problem: globalProblems.concat(skipped).join(' | '),\n  platformSpecificSettings: Object.keys(custom).length ? JSON.stringify(custom) : '',\n} };",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "02eb5615-3684-4490-8e97-2a019e46d3b2",
+      "name": "Keep the platforms that passed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1390,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "305ef919-ab54-4514-a60e-1834e0f19346",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3af90d16-b90b-4a13-8eee-10de1f3c37c6",
+      "name": "At least one platform passed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1620,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "post",
+        "operation": "schedule",
+        "profileId": "={{ $json.profileId }}",
+        "platforms": "={{ $json.platforms }}",
+        "caption": "={{ $json.caption }}",
+        "scheduledAt": "={{ $json.scheduledAt }}",
+        "mediaSource": "imageUrls",
+        "imageUrls": "={{ $json.imageUrl }}",
+        "additionalFields": {
+          "platformSpecificSettings": "={{ $json.platformSpecificSettings }}",
+          "idempotencyKey": "={{ $json.idempotencyKey }}"
+        }
+      },
+      "id": "4d050bd1-5c60-4239-bf5f-ae84b3d42f78",
+      "name": "Schedule the announcement with Socialync",
+      "type": "n8n-nodes-socialync.socialync",
+      "typeVersion": 1,
+      "position": [
+        1850,
+        -100
+      ],
+      "credentials": {
+        "socialyncApi": {
+          "id": null,
+          "name": "Socialync account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "07685335-3b80-4621-a3f8-b4a7ccf9cc63",
+              "name": "postId",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "f72b953e-8fd0-4d98-8f80-ab50950ca2e0",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "70f1bd71-952e-457f-8bf2-26ae810fd533",
+              "name": "scheduledAt",
+              "value": "={{ $json.scheduledAt }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "056c416f-0fea-4ffc-b2cc-be15d68d7f1e",
+      "name": "Show the scheduled announcement",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2080,
+        -180
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "977dfce4-9994-4751-8c46-32b60bec58fc",
+      "name": "Socialync refused this post, read the error",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2080,
+        20
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "07f8d56e-51ea-4094-9f4e-2313bfc92a6f",
+      "name": "No platform passed the check, nothing posted",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1850,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Watch the channel\nEach new video starts one run. Settings holds the platforms and the intro line.",
+        "width": 480,
+        "height": 560,
+        "color": 7
+      },
+      "id": "872f8797-cd03-442f-8ae0-7ddb5db3e3e7",
+      "name": "Section: Watch the channel",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        220,
+        -190
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Build the post\nThe HD thumbnail and a caption for each platform. Shorter text for Bluesky, Threads and X.",
+        "width": 460,
+        "height": 560,
+        "color": 7
+      },
+      "id": "a36b9dff-5d0d-44ca-aa88-094d962781ee",
+      "name": "Section: Build the post",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        690,
+        -190
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Check, then schedule\nSocialync checks the post. Platforms that pass are scheduled, the rest are named in the output.",
+        "width": 1160,
+        "height": 560,
+        "color": 7
+      },
+      "id": "d2fda9ef-c54e-4766-8d77-c73157d28864",
+      "name": "Section: Check, then schedule",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        -190
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Channel ID\nReplace the channel ID in the feed address before you run anything.",
+        "width": 220,
+        "height": 130,
+        "color": 3
+      },
+      "id": "50b5bedc-3528-4970-b063-2c5e2bb78ab3",
+      "name": "Warning: Channel ID",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        225,
+        110
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "YouTube Feed Trigger": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Check for an HD thumbnail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check for an HD thumbnail": {
+      "main": [
+        [
+          {
+            "node": "Build the post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build the post": {
+      "main": [
+        [
+          {
+            "node": "Check the post with Socialync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check the post with Socialync": {
+      "main": [
+        [
+          {
+            "node": "Keep the platforms that passed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep the platforms that passed": {
+      "main": [
+        [
+          {
+            "node": "At least one platform passed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "At least one platform passed?": {
+      "main": [
+        [
+          {
+            "node": "Schedule the announcement with Socialync",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No platform passed the check, nothing posted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule the announcement with Socialync": {
+      "main": [
+        [
+          {
+            "node": "Show the scheduled announcement",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Socialync refused this post, read the error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}
