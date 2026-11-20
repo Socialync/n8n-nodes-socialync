@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-socialync",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "n8n node for the Socialync API: publish and schedule posts to eight social platforms, upload media and read analytics.",
 	"license": "MIT",
 	"homepage": "https://www.socialync.io/developers/api",
