@@ -25,11 +25,18 @@ jobs:
       id-token: write
       contents: read
 
+    # Actions are pinned to a full commit SHA, with the release in the trailing
+    # comment: a tag such as @v4 can be moved to new code, a SHA cannot.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The job's token is read only (contents: read above), so it could
+          # never push; this also keeps it out of the checkout while the
+          # install and release scripts run.
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 'lts/*'
           cache: 'npm'
