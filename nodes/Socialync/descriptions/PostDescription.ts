@@ -133,7 +133,7 @@ function postFields(kind: Kind): INodeProperties[] {
 			type: 'options',
 			typeOptions: { loadOptionsMethod: 'getProfiles' },
 			default: '',
-			description: 'The brand or client to post for. Leave on Default Profile to use your default. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+			description: 'The brand or client to post for. Default Profile works when your account has one profile. With more than one, choose the profile here, or Socialync posts nothing. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 			displayOptions: where,
 		},
 		{

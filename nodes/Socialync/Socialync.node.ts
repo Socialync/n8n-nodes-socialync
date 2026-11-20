@@ -106,7 +106,7 @@ export class Socialync implements INodeType {
 					{
 						name: 'Default Profile',
 						value: '',
-						description: 'The profile Socialync uses when none is chosen',
+						description: 'Your default profile. To post from an account with several profiles, choose one by name.',
 					},
 				];
 				for (const profile of res.data ?? []) {
